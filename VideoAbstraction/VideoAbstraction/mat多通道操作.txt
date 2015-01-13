@@ -1,0 +1,284 @@
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/contrib/contrib.hpp>
+#include <iostream>
+#include <fstream>
+using namespace cv;
+using namespace std;
+
+#pragma comment(lib,"opencv_core231d.lib")
+#pragma comment(lib,"opencv_highgui231d.lib")
+#pragma comment(lib,"opencv_contrib231d.lib")
+
+/*
+为了输出看是否每种方法取得是相同的像素，不要对大图像进行此操作，会很慢的哦！
+下面的例子，在输出时使用的是30*40的图像。
+测试时间时要注释掉，否则I/O操作将极大影响处理时间。
+*/
+//#define PIXEL_OUT
+
+
+int main(int argc,char *argv[])
+{
+	ofstream fout("pixels.txt");
+
+#ifdef PIXEL_OUT
+	Mat img=imread("d:/picture/mat.jpg");
+#else
+	Mat img=imread("d:/picture/lena.bmp");
+#endif
+
+	if(!img.data)
+	{
+		cout<<"load image failed!"<<endl;
+		return -1;
+	}
+	Mat temp;
+	img.convertTo(temp, CV_32FC3);
+	namedWindow("show");
+	int i,j;
+	TickMeter tm;
+	double process_time[7]={0.0};
+	int loop_times =1;
+	for(int n=0; n<loop_times; ++n)
+	{
+		////////////////////////======section1======//////////////////////////
+		/*
+		多通道图像，先将通道split分开，然后针对特定的通道进行处理，
+		每个元素的获取采用的是首先获得行指针，然后逐个获得单通道元素。
+		既可以进行元素为单位的处理，也可以进行跨行的局部块为单位的处理。
+		*/
+		fout<<"-------1-------"<<endl;
+		tm.reset();
+		tm.start();
+		vector<Mat> spl;		
+		split(temp, spl);
+		for (i=0; i<temp.rows; ++i)
+		{
+			float *pt = spl[1].ptr<float>(i);
+			for (j=0; j<temp.cols; ++j)
+			{
+				float mm = pt[j];
+				mm /= 20.6f;
+#ifdef PIXEL_OUT
+				fout<<mm<<" ";
+#endif
+			}
+		}
+		merge(spl, temp);
+		tm.stop();
+		process_time[0] += tm.getTimeMicro();
+		cout<<"method=1,process time="<<tm.getTimeMicro()<<endl;
+
+		//////////////////////////=========section2=========////////////////////////////////
+		/*
+		没有将多通道分开，而是直接对原始Mat操作，也是首先获得单行的指针，然后获得每个元素的；
+		每个元素是多通道的，可以通过[]来获得单个通道的单个元素。可以以元素为单位处理，也可以进行
+		跨行的局部块处理。
+		*/
+		fout<<"-------2-------"<<endl;
+		tm.reset();
+		tm.start();
+		for (i=0; i<temp.rows; ++i)
+		{
+			float *pts = temp.ptr<float>(i);
+			for (j=0; j<temp.cols; ++j)
+			{
+				float mm = pts[3*j+1];
+				mm /=20.6f;
+#ifdef PIXEL_OUT
+				fout<<mm<<" ";
+#endif
+			}
+		}
+		tm.stop();
+		process_time[1] += tm.getTimeMicro();
+		cout<<"method=2,process time="<<tm.getTimeMicro()<<endl;
+
+		//////////////////////////============section3==========//////////////////////////////	
+		/*
+		对连续存储的Mat每个元素的获取，将整个Mat矩阵看做是一个m*n列，1行的数组，在手册提倡的方法中
+		是最快的。但是缺点是丢失了行列信息，只能进行以元素为单位的处理，或者说本行局部的处理，不能进行
+		跨行的局部块处理。
+		*/
+		fout<<"-------3-------"<<endl;
+		tm.reset();
+		tm.start();
+		int col=temp.cols, row = temp.rows;
+		if (temp.isContinuous())
+		{
+			col*=row;
+			row =1;
+		}
+		for (i=0; i<row; ++i)
+		{
+			const float *pt = temp.ptr<float>(i);
+			for (j=0; j<col;++j)
+			{
+				float mm=pt[3*j+1];
+				mm /= 20.6f;
+#ifdef PIXEL_OUT
+				fout<<mm<<" ";
+#endif
+			}
+		}
+		tm.stop();
+		process_time[2] += tm.getTimeMicro();
+		cout<<"method=3,process time="<<tm.getTimeMicro()<<endl;
+
+		///////////////////////////===========section4===============/////////////////////////////////
+		/*
+		直接对原始存储指针的处理，需要对指针比较熟悉，特别是对Mat的数据类型必须清楚，所有类型的Mat的存储都是uchar的即字节为
+		单位的，但是不同的存储类型决定了对指针的解释不同。这样获得的是原始的多通道的第一个通道的指针，访问其他通道时需要进行
+		合适的偏移，ex：下面的是对通道2的访问。该方法可以说最灵活，但是因为直接操作指针所以也最容易出错；既可以处理像素为单位，
+		也可以处理跨行的局部块为单位。类似于C接口时的元素获取方法。
+		*/
+		fout<<"-------4-------"<<endl;
+		tm.reset();
+		tm.start();
+		int step0=temp.step[0],step1=temp.step[1];
+		for (i=0; i<temp.rows; ++i)
+		{
+			for (j=0; j<temp.cols; ++j)
+			{
+				float *pix = (float *)(temp.data+i*step0+j*step1);
+				float tt= *(pix+1)/20.6f;
+#ifdef PIXEL_OUT
+				fout<<tt<<" ";
+#endif
+			}
+		}
+		tm.stop();
+		process_time[3] += tm.getTimeMicro();
+		cout<<"method=4,process time="<<tm.getTimeMicro()<<endl;
+
+		//////////////////////////============section5==========//////////////////////////////	
+		/*
+		与上面的获取方法本质一样，只是首先进行了矩阵的连续性判断，其他的一样；但是丢失了行列信息，
+		只能进行元素的局部性处理。
+		*/
+		fout<<"-------5-------"<<endl;
+		tm.reset();
+		tm.start();
+		int step00=temp.step[0],step01=temp.step[1];
+		int col2=temp.cols, row2 = temp.rows;
+		if (temp.isContinuous())
+		{
+			col2*=row2;
+			row2 =1;
+		}
+		for (i=0; i<row2; ++i)
+		{
+			for (j=0; j<col2;++j)
+			{
+				float *mm= (float *)(temp.data+i*step00+j*step01);
+				float tt = *(mm+1)/20.6f;
+#ifdef PIXEL_OUT
+				fout<<tt<<" ";
+#endif
+			}
+		}
+		tm.stop();	
+		process_time[4] += tm.getTimeMicro();
+		cout<<"method=5,process time="<<tm.getTimeMicro()<<endl;
+
+		//////////////////////////=========section6=========////////////////////////////////
+		/*
+		采用迭代器的获取方法，速度最慢，可能好处就是可以使用STL标准库的算法，同样也没有了行列信息。
+		*/
+		fout<<"-------6-------"<<endl;
+		tm.reset();
+		tm.start();
+		MatConstIterator_<Vec3f> iters = temp.begin<Vec3f>(),end=temp.end<Vec3f>();
+		for(; iters!=end; ++iters)
+		{
+			Vec3f vec3f = *iters;
+			vec3f.val[1] /= 20.6f;
+#ifdef PIXEL_OUT
+			fout<<vec3f.val[1]<<" ";
+#endif
+		}
+		tm.stop();
+		process_time[5] += tm.getTimeMicro();
+		cout<<"method=6,process time="<<tm.getTimeMicro()<<endl;	
+		
+		//////////////////////////=========section7=========////////////////////////////////
+		/*
+		没有将多通道分开，而是直接对原始Mat操作 直接获得每个元素；
+		每个元素是多通道的，将其视为了向量，所以可以通过[]来获得单个通道的单个元素。可以以元素为单位处理，
+		也可以进行跨行的局部块处理。速度也很慢！
+		*/
+		fout<<"-------7-------"<<endl;
+		tm.reset();
+		tm.start();
+		for (i=0; i<temp.rows; ++i)
+		{
+			for (j=0; j<temp.cols; ++j)
+			{			
+				float mm = temp.at<Vec3f>(i,j)[1];
+				mm /=20.6f;
+#ifdef PIXEL_OUT
+				fout<<mm<<" ";
+#endif
+			}
+		}
+		tm.stop();
+		process_time[6] += tm.getTimeMicro();
+		cout<<"method=7,process time="<<tm.getTimeMicro()<<endl;
+
+	}
+
+	cout<<"---------------------------------"<<endl;
+	for (int m=0; m<7; ++m)
+	{
+		cout<<m+1<<"="<<process_time[m]/loop_times<<endl;
+	}
+
+	//////////////=====================end====================///////////
+	imshow("show", img);
+	waitKey(0);
+	return 0;
+}
+/*
+进行多次重复相同操作进行平均，统计每种方法所使用的时间;
+图像为lena.bmp; 512*512;后面为循环次数;运行时间为us;
+测试环境:intel core i5, 4G RAM 笔记本, Win7-x64, VS2008, OpenCV2.3.1
+--------------------------------------------------------
+lena--1000 times
+1=6193.9
+2=2207.22
+3=2178.62
+4=2192.22
+5=2190.63
+6=48178.1
+7=37282.5
+
+lena--100 times
+1=6280.16
+2=2203.45
+3=2170.57
+4=2189.02
+5=2211.84
+6=48197.6
+7=37557.3
+
+lena--10 times
+1=6161.17
+2=2265.63
+3=2184.55
+4=2177.92
+5=2371.33
+6=49008.5
+7=37524.9
+
+lena--1 time
+1=7694.2
+2=2144.1
+3=2113.73
+4=2140.25
+5=2525.96
+6=49292.4
+7=37110.7
+可以看出，2.3.4.5这几种方法总体上是差不多的。可以根据处理需要以及习惯选用；第1种速度适中，
+使用迭代器的方法最慢，第7种次之。
+*/

@@ -1,0 +1,8 @@
+juminxiaoqu.avi	Background/Foreground Subtraction	video abstraction time: 19
+testvideo.avi	Background/Foreground Subtraction	video abstraction time: 10
+juminxiaoqu.avi	Background/Foreground Subtraction	video abstraction time: 23
+testvideo.avi	Background/Foreground Subtraction	video abstraction time: 10
+juminxiaoqu.avi	Background/Foreground Subtraction	video abstraction time: 23
+testvideo.avi	Background/Foreground Subtraction	video abstraction time: 9
+juminxiaoqu.avi	Background/Foreground Subtraction	video abstraction time: 20
+juminxiaoqu.avi	Background/Foreground Subtraction	video abstraction time: 21
